@@ -12,7 +12,7 @@ public class RobotPlayer {
 	/**
 	 * version highlights
 	 * 
-	 *  archon signling efficiency
+	 *  TODO Strategy - fort 
 	 * TODO general signaling efficiency
 	 * TODO build type efficiency
 	 * TODO guard stay around archons
@@ -30,6 +30,7 @@ public class RobotPlayer {
 	static MapLocation leaderLocation; 
 	static boolean stationArchon = false;
 	static boolean shouldAttack = true;
+	static boolean fortArchon = true;
 	public static boolean tempRoamingArchon;
 	public static int numLeaders; 
 	public static int serviceTime = 20;
@@ -39,6 +40,7 @@ public class RobotPlayer {
 	public static RobotType buildType = RobotType.SOLDIER;
 	public static RobotInfo[] allEnemies;
 	public static int distToPack = -1;
+	public static int turretLayer= 1;
 
 
 	public static int leaderID;
@@ -58,12 +60,21 @@ public class RobotPlayer {
 	static int FOUND_ARCHON_X = 9678;
 	static int FOUND_ARCHON_Y = 25044;
 	static final int ENEMY_ARCHON_ID = 963837;
+	private static final int FORT_ELECTION = 239873;
+	static int MOVE_OUT_X = 23451;
+	static int MOVE_OUT_Y = 3481321;
+	static int LEADER_POS = 23382;
 	//navigation
 	static int targetX = -1;
 	static int targetY = -1;
 	static int archonX = -1;
 	static int archonY = -1;
 	static boolean archonFound = false;
+	
+	static int archonAvgX = -1;
+	static int archonAvgY = -1;
+	
+	static boolean moveOut = false;
 	// Possible improvement: this radius is so big that our scouts and archons gain tons of delay
 	// and can't move anymore.
 	static int infinity = 10000;
@@ -77,8 +88,7 @@ public class RobotPlayer {
 					RobotType.GUARD,RobotType.SOLDIER,RobotType.SOLDIER,RobotType.TURRET,RobotType.SOLDIER,RobotType.VIPER};
 
 	static RobotType[] buildListFort = new RobotType[]
-			{RobotType.GUARD,RobotType.SOLDIER,RobotType.TURRET,RobotType.TURRET,RobotType.SCOUT,RobotType.SOLDIER,RobotType.TURRET,
-					RobotType.GUARD,RobotType.SOLDIER,RobotType.SOLDIER,RobotType.TURRET,RobotType.SOLDIER,RobotType.VIPER};
+			{RobotType.TURRET,RobotType.TURRET,RobotType.TURRET,RobotType.TURRET,RobotType.TURRET,RobotType.SOLDIER,RobotType.SOLDIER};
 
 	static RobotType[] buildListLeader = new RobotType[]
 			{RobotType.GUARD,RobotType.SOLDIER,RobotType.SOLDIER,RobotType.TURRET,RobotType.SCOUT,RobotType.TURRET,
@@ -95,6 +105,7 @@ public class RobotPlayer {
 			RobotType.GUARD,
 			RobotType.SCOUT,RobotType.SOLDIER,RobotType.SOLDIER,RobotType.TURRET};
 
+	public static Direction curBuildDir = Direction.NORTH;
 	//navigation 
 	static ArrayList<MapLocation> pastLocations = new ArrayList<MapLocation>();
 	public static int	 patient = 3;
@@ -113,16 +124,19 @@ public class RobotPlayer {
 			try {
 
 				if(rc.getType()==RobotType.ARCHON){
-					if(leader){
-						archonLeaderInstruction();
+					if(fortArchon){
+						rc.setIndicatorString(0, "Im a fort archon");
+						fortArchonInstructions();
 					} else{
-						archonInstructions();
+						//rc.setIndicatorString(0, "now i'm not a fort ");
+						//archonInstructions();
+						
 					}
-					archonInstructions();
+					
 				}else if(rc.getType()==RobotType.TURRET){
-					turretInstructions();
+					Turret.run(rcIn);
 				}else if(rc.getType()==RobotType.TTM){
-					ttmInstructions();
+					TTM.run(rcIn);
 				}else if(rc.getType()==RobotType.GUARD){
 					guardInstructions();
 				}else if(rc.getType() == RobotType.SOLDIER){
@@ -143,6 +157,421 @@ public class RobotPlayer {
 		}
 	}
 
+	private static void fortArchonInstructions() throws GameActionException {
+		// TODO Auto-generated method stub
+		mainFortElection();
+		
+		fortArchonSignaling();
+			
+		
+		
+		
+		if(chooseAndBuildFort()) return;
+		
+		//if(getPartsAround()) return;
+		
+		//fortRunIfNeeded();
+		
+		//build layer if possible
+		//if room , look for parts
+		// maybe build some guards
+		//vipers?
+		
+	}
+
+
+	private static void fortArchonSignaling() throws GameActionException {
+		if(leader && rc.getRoundNum() <=2){
+			rc.broadcastMessageSignal(LEADER_POS, 0, infinity);
+		}
+		//send move out signal
+		if(!spaceAround()){
+			rc.setIndicatorString(1, "we don't have space around");
+			rc.broadcastMessageSignal(MOVE_OUT_X, archonAvgX, 100);
+			rc.broadcastMessageSignal(MOVE_OUT_Y, archonAvgY, 100);
+		}else {
+			rc.setIndicatorString(1, "we do have space around");
+		}
+
+
+	}
+
+	private static boolean spaceAround() {
+		// TODO Auto-generated method stub
+		for (int i = 0; i < 8; i++) {
+			curBuildDir = Direction.values()[(curBuildDir.ordinal()+i+8)%8];
+			// see if there is a direction we can move(build) in
+			if(rc.canMove(curBuildDir)){
+				return true;
+			}
+		}
+		return false;
+			
+	}
+
+	private static boolean chooseAndBuildFort() throws GameActionException {
+		if(rc.isCoreReady()){
+			RobotType robotType;
+			if((rc.getID() + rc.getRoundNum())% 120 ==0){
+				robotType = RobotType.SOLDIER;
+			}
+			else {
+				robotType = RobotType.TURRET;
+			}
+			return buildCircleFort(robotType);
+		}
+		return false;
+	}
+
+	private static boolean buildCircleFort(RobotType robotType) throws GameActionException {
+		// TODO Auto-generated method stub
+		//RobotType robotType = buildListFort[rnd.nextInt(buildListFort.length)]; random by list
+		if (rc.hasBuildRequirements(robotType)) {
+			// Choose a random direction to try to build in
+			for (int i = 0; i < 8; i++) {
+				curBuildDir = Direction.values()[(curBuildDir.ordinal()+i+8)%8];
+				// If possible, build in this direction
+				if (rc.canBuild(curBuildDir, robotType)) {//try to build in a circulr manner
+					rc.build(curBuildDir, robotType);
+					//curBuildDir = curBuildDir.rotateRight();//once i have, rotate a bit
+					return true;
+				} 
+			}
+			//System.out.println("i could't build since i cant build in a direction, even though i have the parts");
+			return false;
+		}
+		return false;
+	}
+
+	private static void mainFortElection() throws GameActionException {
+		if (rc.getRoundNum()  == 0 ) {
+			// First step: elect a leader archon
+			if (rc.getType() == RobotType.ARCHON) {
+				rc.broadcastMessageSignal(FORT_ELECTION, 0, infinity);
+
+				Signal[] received = rc.emptySignalQueue();
+				int numArchons = 0;
+				//System.out.println("received messages: " + received.length);
+				for (Signal s : received) {
+					//System.out.println("signal 0:  " + s.getMessage()[0] + " compared to election code: " + ELECTION) ;
+					if (s.getMessage() != null && s.getMessage()[0] == ELECTION) {
+						numArchons++;
+						//System.out.println("one extra archon before me, cur Total = " + numArchons);
+					}
+				}
+				//System.out.println("total archons before me : " + numArchons);
+				if (numArchons == 0) {
+					// If you haven't received anything yet, then you're the leader.
+					fortArchon = true;
+					leader = true;
+					archonAvgX =rc.getLocation().x;
+					archonAvgY = rc.getLocation().y;
+					rc.setIndicatorString(0, "Im a fort archon");
+				} else {
+					leader = false;
+					rc.setIndicatorString(0, "I'm not the ldaer");
+				}
+			}
+		}
+		
+	}
+
+
+	public static boolean archonLeader = false;
+	private static void archonInstructions() throws GameActionException {
+
+		leaderElection();
+		RobotInfo[] zombies = archonSignaling();
+
+		if(zombies.length <= TOO_MANY_ZOMBIES ){
+			if((rc.getRoundNum()+rc.getID()) %3 ==0){
+				if(activateNeutral())return;
+			}
+
+			if (rc.isCoreReady()) {
+				// Building is #1 priority
+
+
+				//TODO see if this makes a difference
+				boolean zombiesAround = false;
+
+				if(distToPack < PACK_SAFETY_DIST){//make sure we arent to far before we build
+					rc.setIndicatorString(2, "i'm arpparently safe. leader? " + leader + " dist to pack? : "  + distToPack);
+					if(chooseAndBuild(zombiesAround)){
+						return;
+					}
+				}
+				//			Direction randomDir = randomDirection();
+				//			RobotType toBuild = buildList[rnd.nextInt(buildList.length)];
+				//			if (rc.getTeamParts() >= RobotType.SCOUT.partCost) {
+				//				if (rc.canBuild(randomDir,  toBuild)) {
+				//					rc.build(randomDir, toBuild);
+				//					return;
+				//				}
+				//			}
+
+
+				MapLocation target = new MapLocation(targetX, targetY);
+				Direction dir = rc.getLocation().directionTo(target);
+
+				RobotInfo[] enemies = rc.senseHostileRobots(rc.getLocation(), 100);
+				if (enemies.length > TOO_MANY_ENEMIES && leader) {
+					rc.setIndicatorString(0, "my target is opposit of : " + enemies[0].location + " enemy there");
+					Direction away = rc.getLocation().directionTo(enemies[0].location).opposite();
+					tryToMove(away);
+					//Utility.forwardish(away);
+				} else {
+					if((target.x != rc.getLocation().x) && (target.y != rc.getLocation().y)){
+						rc.setIndicatorString(0, "my target is : " + target.toString() + " moving where i'm told. my loc is : " + rc.getLocation().toString() + " are they equal? " + (target ==rc.getLocation()));
+						tryToMove(dir);
+					}
+					//Utility.forwardish(dir);
+				}
+
+				if(distToPack <PACK_SAFETY_DIST)
+					repairWeakOnes();//TODO more streamlined ways of getting here? or is this every really important of more efficient tha nsomething else
+
+			}
+		}
+		else {
+			if(rc.isCoreReady()){
+				rc.setIndicatorString(0, "my target is opposit of : " + zombies[0].location + " zombie there");
+				Direction away = rc.getLocation().directionTo(zombies[0].location).opposite();
+				tryToMove(away);
+			}
+
+		}
+
+
+
+
+
+		//break here 
+		//		if(stationArchon){
+		//			if(rc.getRoundNum()%5 ==0){//move every so often
+		//				if(enoughProtectionDestination()){
+		//					Utility.forwardish(randomDirection());//move (definitely make this more sophisticated) if I have moving direction
+		//					//System.out.println("I should have moved");
+		//				}
+		//			}
+		//
+		//			if (rc.getTeamParts() >= 100){
+		//				stationArchon = true;
+		//			}
+		//
+		//			if(chooseAndBuild(zombiesAround)){
+		//				stationArchon = true;
+		//				return;
+		//			}
+		//		}
+		//
+		//
+		//		stationArchon = false; //couldn't build, try to find a spot with parts
+		//		//mine for materials
+		//		//move
+		//		//etc
+		//
+		//		if(rc.getType() == RobotType.ARCHON){
+		//			//TODO //make this more sophisticated
+		//			movingDirection = Direction.NORTH_WEST;
+		//			if(enoughProtectionDestination() || allEnemies.length ==0){
+		//				Utility.forwardish(movingDirection);
+		//			}
+		//			else{
+		//				//if(rc.getTeamParts()< 40){
+		//				movingDirection = movingDirection.opposite();
+		//				Utility.forwardish(movingDirection);
+		//				//sendInstructions();
+		//
+		//				//}
+		//			}
+		//		}
+
+	}
+
+	private static void repairWeakOnes() throws GameActionException {
+		if( rc.isCoreReady()){
+			if (rc.getRoundNum() %15 == 0 || rc.getRoundNum() %17 ==0){
+				RobotInfo[] alliesToHelp = rc.senseNearbyRobots(rc.getType().attackRadiusSquared,rc.getTeam());
+				MapLocation weakestOne = findWeakestNonArchon(alliesToHelp);
+				if(weakestOne!=null){
+					rc.repair(weakestOne);
+					return;
+				}
+			}
+		}
+
+	}
+
+	private static RobotInfo[] archonSignaling() throws GameActionException {
+
+		//		if(id %2 ==0){
+		//			stationArchon = true;
+		//			//rc.setIndicatorString(1, "stationArchon");
+		//		}
+
+		//		if((rc.getRoundNum()+rc.getID())%3 ==0){
+		//			getArchonInfo();
+		//		}
+		//		if((rc.getRoundNum()+rc.getID()) %15 ==0){
+		//
+		//			sendArchonInfo();
+		//
+		//		}
+
+		RobotInfo[] zombies = getArchonInfo();
+
+		if(zombies.length > TOO_MANY_ZOMBIES){
+			return zombies;
+		}
+		if(leader && (rc.getID() + rc.getRoundNum()) % 7 ==0){//TODO don't keep broadcasting so much
+			sendArchonInfo();
+		}
+
+		return zombies;
+
+		//		if(rc.getRoundNum() == 0){
+		//			Signal[] incomingMessages  =rc.emptySignalQueue(); 
+		//			id = incomingMessages.length;
+		//			//System.out.println("first round, checking archon whose id = " + id);
+		//			rc.setIndicatorString(0, "" +incomingMessages.length + " messages received");
+		//			rc.broadcastMessageSignal(0, 0, 100);
+		//		}else {
+		//			
+		//
+		//
+		//		}
+
+	}
+
+	private static RobotInfo[] getArchonInfo() throws GameActionException {
+		// TODO Auto-generated method stub
+		//enoughProtectionAround = enoughProtectionAround();
+
+		//		if(!enoughProtectionAround) 
+		//		{	rc.setIndicatorString(2, "im running since I don't have protection");
+		//			archonRun();
+		//			return;
+		//		}//we need to focus on getting outta here
+		RobotInfo[] zombies = rc.senseNearbyRobots(100, Team.ZOMBIE);
+		if(zombies.length > TOO_MANY_ZOMBIES){
+			return zombies;
+		}
+
+		Signal[] goodMessages = getGoodMessages();
+
+		if(goodMessages.length ==0){//TODO should arcons also search for enemy archons?
+			targetX = rc.getLocation().x;
+			targetY = rc.getLocation().y;
+			rc.setIndicatorString(2,"no good messages, setting target x, target y to : " + targetX + " " + targetY);
+		}
+
+		for (Signal s : goodMessages) {
+			if (s.getMessage() != null) {
+
+				int command = s.getMessage()[0];
+				if (command == MOVE_X) {
+					targetX = s.getMessage()[1];
+				} else if (command == MOVE_Y) {
+					targetY = s.getMessage()[1];
+				} else if (command == FOUND_ARCHON_X) {
+					archonX = s.getMessage()[1];
+					targetX = archonX;//TODO do we always want to chase archon?
+					distToPack = rc.getLocation().distanceSquaredTo(s.getLocation());
+				} else if (command == FOUND_ARCHON_Y) {
+					archonY = s.getMessage()[1];
+					targetY = archonY;
+					archonFound = true;
+					distToPack = rc.getLocation().distanceSquaredTo(s.getLocation());
+					rc.setIndicatorString(1, "found an archon at " + targetX + " " + targetY);
+				}
+			}
+		}
+		return zombies;
+
+	}
+	public static boolean firstBroadCast = true; 
+	private static void sendArchonInfo() throws GameActionException {
+		// TODO Auto-generated method stub
+		//if(archonFound && (rc.getID() + rc.getRoundNum() %8 ==0)){
+		if(archonFound ){
+
+			if(firstBroadCast){
+				//if(enoughProtectionAround()){
+				//				rc.broadcastMessageSignal(, r.location.x, infinity);
+				//				rc.broadcastMessageSignal(, r.location.y, infinity);
+				rc.broadcastMessageSignal(MOVE_X, archonX, infinity);
+				rc.broadcastMessageSignal(MOVE_Y, archonY, infinity);
+				//}else{
+				movingDirection = randomDirection();
+				//rc.broadcastMessageSignal(rc.getTeam().ordinal(), movingDirection.ordinal(), 2250);
+				firstBroadCast = false; 
+			} //}
+			else if ((rc.getRoundNum()+ rc.getID())% 9 ==0){
+				rc.broadcastMessageSignal(MOVE_X, archonX, 1000);
+				rc.broadcastMessageSignal(MOVE_Y, archonY, 1000);
+			}
+			//			else if(((rc.getRoundNum()+ rc.getID())% 307 ==0)){//TODO: fiddle with update frequency
+			//				firstBroadCast = true;
+			//			}
+
+		}
+		else {//TODO what to do if I dont have a direction
+			MapLocation loc = rc.getLocation();
+			targetX = loc.x;
+			targetY = loc.y;
+			rc.broadcastMessageSignal(MOVE_X, targetX, 225);
+			rc.broadcastMessageSignal(MOVE_Y, targetY, 225);
+			rc.setIndicatorString(2, "haven't found an archon, so broadcastimg my location at: " + targetX + " " + targetY);
+		}
+
+
+
+
+		//
+		//			if(stationArchon){
+		//
+		//				movingDirection = randomDirection();
+		//				rc.broadcastMessageSignal(rc.getTeam().ordinal(), movingDirection.ordinal(), 2250);
+		//
+		//			}else{
+		//
+		//				MapLocation aheadLocation = rc.getLocation().add(movingDirection.dx*4, movingDirection.dy*4);
+		//				if(!rc.onTheMap(aheadLocation)|| rc.getRoundNum()%200 ==0){
+		//					movingDirection = randomDirection();
+		//
+		//				}
+		//
+		//				rc.broadcastMessageSignal(rc.getTeam().ordinal(), movingDirection.ordinal(), 225);
+		//				//if(rc.getType()==RobotType.SOLDIER)
+		//				//System.out.println("ima a soldier with id: "+ Integer.toString(id));
+		//			}
+
+	}
+
+	private static RobotInfo[] allProtectors; 
+	private static void archonRun() throws GameActionException {
+
+		if(rc.isCoreReady()){
+
+			if(allProtectors.length >0){
+				MapLocation nearbyProtector = allProtectors[0].location;
+				movingDirection = rc.getLocation().directionTo(nearbyProtector);
+			}
+			else{
+				MapLocation nearbyEnemy = allEnemies[0].location;//TODO be smarter about running from enemy
+				movingDirection = rc.getLocation().directionTo(nearbyEnemy).opposite();
+			}
+
+
+			Utility.forwardish(movingDirection);
+		}
+
+
+	}
+
+	
+	
 	static int turnsLeft = 0; // number of turns to move in scoutDirection
 
 	private static void scoutInstructions() throws GameActionException {
@@ -649,425 +1078,41 @@ public class RobotPlayer {
 
 	}
 
-	private static void turretInstructions() throws GameActionException {
-		//TODO archon focused and regualr enemy focused turrets/ttms??
 
+	
+//	private static void turretInstructions() throws GameActionException {
+//		//TODO archon focused and regualr enemy focused turrets/ttms??
+//
+//
+//
+//		if(turretTryToAttack()){
+//			return;
+//
+//		}else{
+//			//there are no enemies nearby
+//			//check to see if we are in the way of friends
+//			//we are obstructing them
+//
+//			if(archonFound && turretStationTimeLeft<=0){
+//				turretStationTimeLeft = TURRET_STATION_TIME;
+//				rc.pack();
+//				return;
+//			}else if(turretStationTimeLeft<=0){
+//				rc.setIndicatorString(1, "no enemies, should move");
+//				if(turretMoveOutOfWay()){
+//					turretStationTimeLeft = TURRET_STATION_TIME;//TODO maybe stay for shorter time?
+//				}
+//			}
+//			turretStationTimeLeft --;
+//
+//
+//
+//		}
+//
+//	}
 
-
-		if(turretTryToAttack()){
-			return;
-
-		}else{
-			//there are no enemies nearby
-			//check to see if we are in the way of friends
-			//we are obstructing them
-
-			if(archonFound && turretStationTimeLeft<=0){
-				turretStationTimeLeft = TURRET_STATION_TIME;
-				rc.pack();
-				return;
-			}else if(turretStationTimeLeft<=0){
-				rc.setIndicatorString(1, "no enemies, should move");
-				if(turretMoveOutOfWay()){
-					turretStationTimeLeft = TURRET_STATION_TIME;//TODO maybe stay for shorter time?
-				}
-			}
-			turretStationTimeLeft --;
-
-
-
-		}
-
-	}
-
-	private static boolean turretMoveOutOfWay() throws GameActionException {
-		//there are no enemies nearby
-		//check to see if we are in the way of friends
-		//we are obstructing them
-		if(rc.isCoreReady()){
-			RobotInfo[] nearbyFriends = rc.senseNearbyRobots(2, rc.getTeam());
-			if(nearbyFriends.length>3){
-				Direction away = randomDirection();
-				MapLocation newLoc = rc.getLocation().add(away);
-				targetX = newLoc.x;
-				targetY = newLoc.y;
-				rc.pack();
-				return true;
-			}
-		}
-		return false;
-
-	}
-
-	private static boolean turretTryToAttack() throws GameActionException {
-
-
-		RobotInfo[] visibleEnemyArray = rc.senseHostileRobots(rc.getLocation(),RobotType.TURRET.attackRadiusSquared);//TODO what should this range be?
-		Signal[] incomingSignals = rc.emptySignalQueue();
-		MapLocation[] enemyArray = combineThingsAttackable(visibleEnemyArray,incomingSignals);
-
-
-		if(rc.isWeaponReady()){
-			//look for adjacent enemies to attack
-			//TODO try to attack archons close by
-			if(archonFound){
-				//MapLocation archonLoc = new MapLocation(archonX,archonY);
-				//boolean canAttackArchon = rc.getLocation().distanceSquaredTo(archonLoc)+TURRET_ATTACK_BUFF < RobotType.TURRET.attackRadiusSquared;	
-				for (RobotInfo r : visibleEnemyArray) {
-					if (r.type == RobotType.ARCHON ){
-						if (rc.isWeaponReady()&&rc.canAttackLocation(r.location)) {
-							rc.setIndicatorString(0,"trying to attack archon at : " + r.location);
-							rc.attackLocation(r.location);
-							return true;
-						}
-					}
-				} 
-				//we can't shoot the archon, decide to move or start moving towards archon
-				if(turretStationTimeLeft <=0){
-					rc.setIndicatorString(0,"couldn't attack archon,and been stationed a while so trygon to move to:  " + targetX +" " +  targetY + "round num: " + rc.getRoundNum());
-					targetX = archonX;
-					targetY = archonY;
-					turretStationTimeLeft = TURRET_STATION_TIME;//packing up, reset station time
-					rc.pack();//TODO always move towards archon?
-				} else {
-					turretStationTimeLeft --; //stay stationed for a while
-					for(MapLocation oneEnemy:enemyArray){
-						if(rc.canAttackLocation(oneEnemy)){
-							rc.setIndicatorString(0,"trying to attack. Station time left: " + turretStationTimeLeft);
-							rc.attackLocation(oneEnemy);
-							return true;
-						}
-					}
-				}
-
-			}else {
-				for(MapLocation oneEnemy:enemyArray){
-					if(rc.canAttackLocation(oneEnemy)){
-						rc.setIndicatorString(0,"trying to attack close by since archonFound: "+ archonFound);
-						rc.attackLocation(oneEnemy);
-						return true;
-					}
-				}
-			}
-		}
-		return false;
-		//could not find any enemies adjacent to attack
-		//try to move toward them
-		//		if(rc.isCoreReady()){
-		//			if(!archonFound){
-		//				MapLocation goal = enemyArray[0];
-		//				targetX = goal.x;
-		//				targetY = goal.y;
-		//				turretStation
-		//				rc.pack();
-		//			}
-		//		}
-
-	}
-
-	private static MapLocation[] ttmGetEnemies() {
-		RobotInfo[] visibleEnemyArray = rc.senseHostileRobots(rc.getLocation(),RobotType.TURRET.attackRadiusSquared);//TODO what should this range be?
-		Signal[] incomingSignals = rc.emptySignalQueue();
-		MapLocation[] enemyArray = combineThingsAttackable(visibleEnemyArray,incomingSignals);
-		return enemyArray;
-	}
-
+	
 	public static boolean enoughProtectionAround =true;
-
-	public static boolean archonLeader = false;
-	private static void archonInstructions() throws GameActionException {
-
-		leaderElection();
-		RobotInfo[] zombies = archonSignaling();
-
-		if(zombies.length <= TOO_MANY_ZOMBIES ){
-			if((rc.getRoundNum()+rc.getID()) %3 ==0){
-				if(activateNeutral())return;
-			}
-
-			if (rc.isCoreReady()) {
-				// Building is #1 priority
-
-
-				//TODO see if this makes a difference
-				boolean zombiesAround = false;
-
-				if(distToPack < PACK_SAFETY_DIST){//make sure we arent to far before we build
-					rc.setIndicatorString(2, "i'm arpparently safe. leader? " + leader + " dist to pack? : "  + distToPack);
-					if(chooseAndBuild(zombiesAround)){
-						return;
-					}
-				}
-				//			Direction randomDir = randomDirection();
-				//			RobotType toBuild = buildList[rnd.nextInt(buildList.length)];
-				//			if (rc.getTeamParts() >= RobotType.SCOUT.partCost) {
-				//				if (rc.canBuild(randomDir,  toBuild)) {
-				//					rc.build(randomDir, toBuild);
-				//					return;
-				//				}
-				//			}
-
-
-				MapLocation target = new MapLocation(targetX, targetY);
-				Direction dir = rc.getLocation().directionTo(target);
-
-				RobotInfo[] enemies = rc.senseHostileRobots(rc.getLocation(), 100);
-				if (enemies.length > TOO_MANY_ENEMIES && leader) {
-					rc.setIndicatorString(0, "my target is opposit of : " + enemies[0].location + " enemy there");
-					Direction away = rc.getLocation().directionTo(enemies[0].location).opposite();
-					tryToMove(away);
-					//Utility.forwardish(away);
-				} else {
-					if((target.x != rc.getLocation().x) && (target.y != rc.getLocation().y)){
-						rc.setIndicatorString(0, "my target is : " + target.toString() + " moving where i'm told. my loc is : " + rc.getLocation().toString() + " are they equal? " + (target ==rc.getLocation()));
-						tryToMove(dir);
-					}
-					//Utility.forwardish(dir);
-				}
-
-				if(distToPack <PACK_SAFETY_DIST)
-					repairWeakOnes();//TODO more streamlined ways of getting here? or is this every really important of more efficient tha nsomething else
-
-			}
-		}
-		else {
-			if(rc.isCoreReady()){
-				rc.setIndicatorString(0, "my target is opposit of : " + zombies[0].location + " zombie there");
-				Direction away = rc.getLocation().directionTo(zombies[0].location).opposite();
-				tryToMove(away);
-			}
-
-		}
-
-
-
-
-
-		//break here 
-		//		if(stationArchon){
-		//			if(rc.getRoundNum()%5 ==0){//move every so often
-		//				if(enoughProtectionDestination()){
-		//					Utility.forwardish(randomDirection());//move (definitely make this more sophisticated) if I have moving direction
-		//					//System.out.println("I should have moved");
-		//				}
-		//			}
-		//
-		//			if (rc.getTeamParts() >= 100){
-		//				stationArchon = true;
-		//			}
-		//
-		//			if(chooseAndBuild(zombiesAround)){
-		//				stationArchon = true;
-		//				return;
-		//			}
-		//		}
-		//
-		//
-		//		stationArchon = false; //couldn't build, try to find a spot with parts
-		//		//mine for materials
-		//		//move
-		//		//etc
-		//
-		//		if(rc.getType() == RobotType.ARCHON){
-		//			//TODO //make this more sophisticated
-		//			movingDirection = Direction.NORTH_WEST;
-		//			if(enoughProtectionDestination() || allEnemies.length ==0){
-		//				Utility.forwardish(movingDirection);
-		//			}
-		//			else{
-		//				//if(rc.getTeamParts()< 40){
-		//				movingDirection = movingDirection.opposite();
-		//				Utility.forwardish(movingDirection);
-		//				//sendInstructions();
-		//
-		//				//}
-		//			}
-		//		}
-
-	}
-
-
-
-	private static void repairWeakOnes() throws GameActionException {
-		if( rc.isCoreReady()){
-			if (rc.getRoundNum() %15 == 0 || rc.getRoundNum() %17 ==0){
-				RobotInfo[] alliesToHelp = rc.senseNearbyRobots(rc.getType().attackRadiusSquared,rc.getTeam());
-				MapLocation weakestOne = findWeakestNonArchon(alliesToHelp);
-				if(weakestOne!=null){
-					rc.repair(weakestOne);
-					return;
-				}
-			}
-		}
-
-	}
-
-	private static RobotInfo[] archonSignaling() throws GameActionException {
-
-		//		if(id %2 ==0){
-		//			stationArchon = true;
-		//			//rc.setIndicatorString(1, "stationArchon");
-		//		}
-
-		//		if((rc.getRoundNum()+rc.getID())%3 ==0){
-		//			getArchonInfo();
-		//		}
-		//		if((rc.getRoundNum()+rc.getID()) %15 ==0){
-		//
-		//			sendArchonInfo();
-		//
-		//		}
-
-		RobotInfo[] zombies = getArchonInfo();
-
-		if(zombies.length > TOO_MANY_ZOMBIES){
-			return zombies;
-		}
-		if(leader && (rc.getID() + rc.getRoundNum()) % 7 ==0){//TODO don't keep broadcasting so much
-			sendArchonInfo();
-		}
-
-		return zombies;
-
-		//		if(rc.getRoundNum() == 0){
-		//			Signal[] incomingMessages  =rc.emptySignalQueue(); 
-		//			id = incomingMessages.length;
-		//			//System.out.println("first round, checking archon whose id = " + id);
-		//			rc.setIndicatorString(0, "" +incomingMessages.length + " messages received");
-		//			rc.broadcastMessageSignal(0, 0, 100);
-		//		}else {
-		//			
-		//
-		//
-		//		}
-
-	}
-
-	private static RobotInfo[] getArchonInfo() throws GameActionException {
-		// TODO Auto-generated method stub
-		//enoughProtectionAround = enoughProtectionAround();
-
-		//		if(!enoughProtectionAround) 
-		//		{	rc.setIndicatorString(2, "im running since I don't have protection");
-		//			archonRun();
-		//			return;
-		//		}//we need to focus on getting outta here
-		RobotInfo[] zombies = rc.senseNearbyRobots(100, Team.ZOMBIE);
-		if(zombies.length > TOO_MANY_ZOMBIES){
-			return zombies;
-		}
-
-		Signal[] goodMessages = getGoodMessages();
-
-		if(goodMessages.length ==0){//TODO should arcons also search for enemy archons?
-			targetX = rc.getLocation().x;
-			targetY = rc.getLocation().y;
-			rc.setIndicatorString(2,"no good messages, setting target x, target y to : " + targetX + " " + targetY);
-		}
-
-		for (Signal s : goodMessages) {
-			if (s.getMessage() != null) {
-
-				int command = s.getMessage()[0];
-				if (command == MOVE_X) {
-					targetX = s.getMessage()[1];
-				} else if (command == MOVE_Y) {
-					targetY = s.getMessage()[1];
-				} else if (command == FOUND_ARCHON_X) {
-					archonX = s.getMessage()[1];
-					targetX = archonX;//TODO do we always want to chase archon?
-					distToPack = rc.getLocation().distanceSquaredTo(s.getLocation());
-				} else if (command == FOUND_ARCHON_Y) {
-					archonY = s.getMessage()[1];
-					targetY = archonY;
-					archonFound = true;
-					distToPack = rc.getLocation().distanceSquaredTo(s.getLocation());
-					rc.setIndicatorString(1, "found an archon at " + targetX + " " + targetY);
-				}
-			}
-		}
-		return zombies;
-
-	}
-	public static boolean firstBroadCast = true; 
-	private static void sendArchonInfo() throws GameActionException {
-		// TODO Auto-generated method stub
-		//if(archonFound && (rc.getID() + rc.getRoundNum() %8 ==0)){
-		if(archonFound ){
-
-			if(firstBroadCast){
-				//if(enoughProtectionAround()){
-				//				rc.broadcastMessageSignal(, r.location.x, infinity);
-				//				rc.broadcastMessageSignal(, r.location.y, infinity);
-				rc.broadcastMessageSignal(MOVE_X, archonX, infinity);
-				rc.broadcastMessageSignal(MOVE_Y, archonY, infinity);
-				//}else{
-				movingDirection = randomDirection();
-				//rc.broadcastMessageSignal(rc.getTeam().ordinal(), movingDirection.ordinal(), 2250);
-				firstBroadCast = false; 
-			} //}
-			else if ((rc.getRoundNum()+ rc.getID())% 9 ==0){
-				rc.broadcastMessageSignal(MOVE_X, archonX, 1000);
-				rc.broadcastMessageSignal(MOVE_Y, archonY, 1000);
-			}
-			//			else if(((rc.getRoundNum()+ rc.getID())% 307 ==0)){//TODO: fiddle with update frequency
-			//				firstBroadCast = true;
-			//			}
-
-		}
-		else {//TODO what to do if I dont have a direction
-			MapLocation loc = rc.getLocation();
-			targetX = loc.x;
-			targetY = loc.y;
-			rc.broadcastMessageSignal(MOVE_X, targetX, 225);
-			rc.broadcastMessageSignal(MOVE_Y, targetY, 225);
-			rc.setIndicatorString(2, "haven't found an archon, so broadcastimg my location at: " + targetX + " " + targetY);
-		}
-
-
-
-
-		//
-		//			if(stationArchon){
-		//
-		//				movingDirection = randomDirection();
-		//				rc.broadcastMessageSignal(rc.getTeam().ordinal(), movingDirection.ordinal(), 2250);
-		//
-		//			}else{
-		//
-		//				MapLocation aheadLocation = rc.getLocation().add(movingDirection.dx*4, movingDirection.dy*4);
-		//				if(!rc.onTheMap(aheadLocation)|| rc.getRoundNum()%200 ==0){
-		//					movingDirection = randomDirection();
-		//
-		//				}
-		//
-		//				rc.broadcastMessageSignal(rc.getTeam().ordinal(), movingDirection.ordinal(), 225);
-		//				//if(rc.getType()==RobotType.SOLDIER)
-		//				//System.out.println("ima a soldier with id: "+ Integer.toString(id));
-		//			}
-
-	}
-
-	private static RobotInfo[] allProtectors; 
-	private static void archonRun() throws GameActionException {
-
-		if(rc.isCoreReady()){
-
-			if(allProtectors.length >0){
-				MapLocation nearbyProtector = allProtectors[0].location;
-				movingDirection = rc.getLocation().directionTo(nearbyProtector);
-			}
-			else{
-				MapLocation nearbyEnemy = allEnemies[0].location;//TODO be smarter about running from enemy
-				movingDirection = rc.getLocation().directionTo(nearbyEnemy).opposite();
-			}
-
-
-			Utility.forwardish(movingDirection);
-		}
-
-
-	}
 
 	private static MapLocation findWeakest(RobotInfo[] listOfRobots){
 		double weakestSoFar = -100;
@@ -1234,12 +1279,12 @@ public class RobotPlayer {
 
 	}
 
-	private static Direction randomDirection() {
+	static Direction randomDirection() {
 		// TODO Auto-generated method stub
 		return Direction.values()[(int)(rnd.nextDouble()*8)];
 	}
 
-	private static boolean activateNeutral() throws GameActionException {
+	static boolean activateNeutral() throws GameActionException {
 		RobotInfo[] nearbyBots = rc.senseNearbyRobots(1, Team.NEUTRAL);
 
 		if(nearbyBots.length > 0){
@@ -1259,7 +1304,7 @@ public class RobotPlayer {
 
 	}
 
-	private static Signal pickLeader(Signal[] goodMessages) {
+	static Signal pickLeader(Signal[] goodMessages) {
 		//		
 		//		if(rc.getType() == RobotType.SOLDIER){//TODO anyway to make some more a certain leader more likely?
 		//			int tries = 3
@@ -1272,7 +1317,7 @@ public class RobotPlayer {
 
 	}
 
-	private static Signal[] getGoodMessages() {
+	static Signal[] getGoodMessages() {
 		int numGoodMessages = 0;
 		Signal[] incomingMessages = rc.emptySignalQueue();
 		if (incomingMessages.length == 0) return new Signal[]{};//no messages, what does an unsuspecting soldier do?
@@ -1321,7 +1366,7 @@ public class RobotPlayer {
 		else if(leader) {
 			if (buildWherePossible(buildListLeaderFort[rnd.nextInt(buildListLeader.length)])) return true;
 
-		}else if (buildWherePossible(buildListFort[rnd.nextInt(buildList.length)]))return true;
+		}else if (buildWherePossible(buildListFort[rnd.nextInt(buildListFort.length)]))return true;
 
 		return false;
 
@@ -1645,7 +1690,7 @@ public class RobotPlayer {
 		}
 	}
 
-	private static MapLocation[] combineThingsAttackable(RobotInfo[] visibleEnemyArray, Signal[] incomingSignals) {
+	static MapLocation[] combineThingsAttackable(RobotInfo[] visibleEnemyArray, Signal[] incomingSignals) {
 		ArrayList<MapLocation> attackableEnemyArray = new ArrayList<MapLocation>();
 		for(RobotInfo r:visibleEnemyArray){
 			attackableEnemyArray.add(r.location);
